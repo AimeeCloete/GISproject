@@ -1,0 +1,222 @@
+---
+title: "Aimee GIS project final"
+author: "Aimee"
+date: '2022-04-22'
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+This code is a combined effort between Aimee Cloete and Frances Hill. 
+Our project concepts were similar and so we decided to work together to develop the basic code needed to answer the question of what is the Sea Surface Temperature where our species of interest is found. The basis of our code was built on Hansen Johnson's code (https://hansenjohnson.org/post/sst-in-r/) and a website called Semba-blog (https://semba-blog.netlify.app/12/14/2020/manipulate-and-visualize-raster-data-with-leaflet-and-tmap-in-r/. Our project findings were analyzed separately.
+
+# Project outline:
+This project aims to investigate Parechinus angulosus sea urchin species locality data from iNaturalist and overlay these localities onto a sea surface temperature (SST) layer to determine preferred SST ranges for P. angulosus. 
+
+I then incorporate this onto leaflet.
+
+load all packages needed:
+```{r, include = TRUE}
+library(rinat)
+library(tidyverse)
+library(sp)
+library(sf)
+library(rgdal)
+library(raster)
+library(lwgeom)
+library(terra)
+library(exactextractr)
+library(stars)
+library(rosm)
+library(ggspatial)
+library(rinat)
+library(ncdf4)
+library(ggplot2)
+library(ggspatial)
+library(rnaturalearthdata)
+library(rnaturalearth)
+library(rnaturalearthhires)
+suppressPackageStartupMessages(library(oce))
+suppressPackageStartupMessages(library(ncdf4))
+suppressPackageStartupMessages(library(ocedata))
+suppressPackageStartupMessages(library(terra))
+data("coastlineWorldFine")
+library(RColorBrewer)
+library(colorspace)
+library(leaflet)
+library(htmltools)
+library(tmap)
+library(spData)
+
+
+```
+
+# Urchin plot:
+
+The urchin plot uses data extracted from iNaturalist. 
+Data is cleaned by removing any localities which are not "research grade" and have positional accuracy <46m.
+The localities are overlaid onto Open Street Maps.
+
+```{r, include=FALSE}
+#Call the data directly from iNat
+urchin <- get_inat_obs(taxon_name = "Parechinus angulosus",
+                   bounds = c(-35, 18, -33.5, 18.5),
+                   maxresults = 1000)
+#View the first few rows of data
+head(urchin)
+
+urchin <- urchin %>% filter(positional_accuracy<46 & 
+                latitude<0 &
+                !is.na(latitude) &
+                captive_cultivated == "false" &
+                quality_grade == "research")
+
+class(urchin)
+
+#Make the dataframe a spatial object of class = "sf"
+urchin <- st_as_sf(urchin, coords = c("longitude", "latitude"), crs = 4326)
+class(urchin)
+names(urchin)
+
+#Plot
+ggplot() + geom_sf(data=urchin)
+
+#overlay plot on open street maps
+ggplot() + 
+  annotation_map_tile(type = "osm", progress = "none") + 
+  geom_sf(data=urchin)
+```
+```{r}
+ggplot() + 
+  annotation_map_tile(type = "osm", progress = "none") + 
+  geom_sf(data=urchin)
+```
+
+
+# SST plot:
+
+This code was created using the following websites:
+Sea surface temperature (SST) in R by Hansen Johnson (https://hansenjohnson.org/post/sst-in-r/) and Semba-blog (https://semba-blog.netlify.app/12/14/2020/manipulate-and-visualize-raster-data-with-leaflet-and-tmap-in-r/)
+
+The data used can be downloaded using this link:
+(https://www.ncei.noaa.gov/data/sea-surface-temperature-optimum-interpolation/v2/access/-/)
+File name: 20190514120000-NCEI-L4_GHRSST-SSTblend-AVHRR_OI-GLOB-v02.0-fv02.0.nc
+
+```{r, echo=FALSE}
+fname <- "NETCDF:\"C:/Users/aimee/OneDrive/Documents/UCT/2022/DATA MANAGEMENT & GIS/GIS PROJECT/GGIISS.nc\":analysed_sst" #You will need to specify your location here
+SST <- rast(fname)
+#SST
+plot(SST)
+```
+The data we used is from NOAA database.
+It includes mean SST (Kelvin) for the globe for 15.04.2019
+We are focused on the Cape Peninsula so the data is cropped to a smaller extent.
+The data resolution was increased using the disaggregate function because when cropping the SST global map to isolate the Cape Peninsula the pixels are too large to make good interpretations of the data.
+We also converted Kelvin into Celsius.
+
+```{r, include = FALSE}
+#subset data for smaller extent
+ROI <- extent(17.5,19.5,-34.4,-33.6)
+ROI
+
+#crop data according to extent set
+r.crop <- crop(SST,ROI)
+plot(r.crop)
+
+
+
+#disaggregate data to increase the resolution
+
+new.crop <- crop(SST,ROI)
+upsample <- disagg(new.crop, fact = 100, method = "bilinear")
+
+
+#convert Kelvin to Celcius
+new.crop<- upsample - 273.15
+
+```
+
+The data we have is very coarse. The pixels have large overlap with the coastline.
+This plot shows the mean SST (Celsius) around the Cape Peninsula with a coastline overlay. The coastline used is from the oce package. The coastline extends outside the bounds of our SST plot:
+
+```{r, echo = FALSE, error=TRUE}
+plot(new.crop, col = diverging_hcl(40, "Blue-Red 3"))+ plot(coastlineWorldFine, clongitude=18.5, clatitude=-34, span=150, add = TRUE)
+```
+The next plot shows the mean SST (Celsius) around the Cape Peninsula with a coastline overlay and the land cover is filled in grey. This corrected the SST overlay onto the land but because the coastline extends outside the bounds of our SST plot, the land cover fill overlapped the SST colour scale:
+
+```{r, echo = FALSE, error=TRUE}
+plot(new.crop, col = diverging_hcl(40, "Blue-Red 3")) + plot(coastlineWorldFine, clongitude=18.5, clatitude=-34,fill = "grey", span=150, add = TRUE)
+```
+The next plot uses rnatural earth for the coastline.
+This overlay matched up better with our SST data:
+
+```{r, echo=FALSE, error=TRUE}
+
+#OPTION 2 - use rnatural earth, but coastline is not very pretty
+require(rnaturalearth)
+#install.packages("rnaturalearthhires", repos = "http://packages.ropensci.org", type = "source")
+coastlines <- rnaturalearth::ne_coastline(scale = 10, returnclass = "sp")
+
+plot(new.crop, col = diverging_hcl(40, "Blue-Red 3")) + plot(coastlines, fill = "grey", add = TRUE)
+
+
+```
+To include both P.angulosus localities and SST data onto a map we used leaflet.
+
+
+# Leaflet:
+
+```{r, include = FALSE}
+fname <- "NETCDF:\"C:/Users/aimee/OneDrive/Documents/UCT/2022/DATA MANAGEMENT & GIS/GIS PROJECT/GGIISS.nc\":analysed_sst" #You will need to specify your location here
+sst<- raster(fname)
+sst<- sst -273.15
+sst %>% extent()
+sst %>% setMinMax()
+tz.bbox = extent(17, 20, -35, -32)
+sst.tz = sst %>% raster::crop(tz.bbox)
+sst.tz %>% setMinMax()
+sst %>% crs()
+crs(sst.tz) <- "+proj=longlat +datum=WGS84 +no_defs"
+crs(sst) <- "+proj=longlat +datum=WGS84 +no_defs"
+sst.tz %>% crs()
+sst.tz <-  disaggregate(sst.tz, fact = 50, method = "bilinear")
+
+sst.tz %>% setMinMax()
+sst.tz[sst.tz < 12 | sst.tz > 21] = NA
+
+#pal = colorNumeric(c("#7f007f", "#0000ff",  "#007fff", "#00ffff", "#00bf00", "#7fdf00","#ffff00", "#ff7f00", "#ff3f00", "#ff0000", "#bf0000"), values(sst.tz),  na.color = "transparent")
+
+#sst.color = c("#7f007f", "#0000ff",  "#007fff", "#00ffff", "#00bf00", "#7fdf00",
+#"#ffff00", "#ff7f00", "#ff3f00", "#ff0000", "#bf0000")
+
+
+
+```
+Plot leaflet map, this is not able to be knitted into a pdf, please see rmarkdown file for leaflet map.
+```{r, error=TRUE}
+library(leaflet)
+library(htmltools)
+#map<-  leaflet(data)
+#map%>% addTiles(map)
+#Urchin
+leaflet() %>%
+  # Add default OpenStreetMap map tiles
+  addTiles(group = "Default") %>%  
+  # Add our points
+  addCircleMarkers(data = urchin,
+                   group = "Parechinus angulosus",
+                   radius = 3, 
+                   color = "green") %>%
+ #Add SST
+  addRasterImage(x = sst.tz , 
+                 colors = "viridis", 
+                 opacity = 1, data = getMapData(map)) %>%
+  #Add legend
+  addLegend(pal = colorNumeric("viridis",domain = NULL), values = values(sst.tz),
+  title = "Temperature") 
+```
+
